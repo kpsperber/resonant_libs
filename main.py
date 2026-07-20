@@ -5,12 +5,51 @@ import pandas as pd
 import os
 from scipy.optimize import curve_fit
 from scipy.special import voigt_profile
+from spexread import read_spe_file
+import re
 
-def read_spe(file_name):
-    lamb = None
-    spectrum = None
+def concentration_from_filename(filename):
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    concentration_text = stem.split("_")[0]
+    return float(concentration_text)
 
-    return lamb, spectrum
+def natural_sort_key(text):
+    return [
+        int(part) if part.isdigit() else part.lower()
+        for part in re.split(r"(\d+)", text)
+    ]
+
+def read_spe(file_path, roi_name="ROI 0"):
+    spe = read_spe_file(file_path)
+
+    if roi_name not in spe:
+        raise KeyError(
+            f"{roi_name!r} was not found. "
+            f"Available ROIs: {list(spe.data_vars)}"
+        )
+
+    roi = spe[roi_name]
+
+    if "wavelength" not in roi.coords:
+        raise ValueError(
+            "No wavelength calibration was found in the SPE file."
+        )
+
+    lamb = roi["wavelength"].to_numpy()
+
+    # Average all dimensions except the wavelength dimension.
+    wavelength_dim = roi["wavelength"].dims[0]
+    average_dims = [
+        dim for dim in roi.dims
+        if dim != wavelength_dim
+    ]
+
+    if average_dims:
+        spectrum = roi.mean(dim=average_dims).to_numpy()
+    else:
+        spectrum = roi.to_numpy()
+
+    return np.asarray(lamb), np.asarray(spectrum)
 
 def profile(x, A, mu, sigma):
     return A * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
@@ -47,24 +86,58 @@ def analysis(amplitudes, concentrations):
         np.inf
     ]
 
-    popt, pcov = curve_fit(linear, amplitudes, concentrations, b0, bounds = (lower_bounds, upper_bounds))
+    popt, pcov = curve_fit(linear, amplitudes, concentrations, p0, bounds = (lower_bounds, upper_bounds))
     return popt, pcov
 
-root_folder = "LIBS Data"
+root_folder = "LIBS Data\\Images"
 lamb_min = 390.0
 lamb_max = 415.0
+key_wavelength = 430.36
 lamb_range = [lamb_min, lamb_max]
-concentrations = np.array([0.01, 0.02, 0.03, 0.04, 0.05])
-test = True
+concentrations = np.array([0.0, 0.01, 0.02, 0.03, 0.04, 0.05])
+test = False
 
 if not test:
-    amp = []
+    records = []
+
     for file in os.listdir(root_folder):
-        print(f"Analyzing: {file}")
+        if not file.lower().endswith(".spe"):
+            continue
+
         file_path = os.path.join(root_folder, file)
+        concentration = concentration_from_filename(file)
+
+        print(
+            f"Analyzing: {file}, "
+            f"concentration: {concentration}"
+        )
 
         lamb, spectrum = read_spe(file_path)
-        extract_spectrum_data(lamb, spectrum, lamb_range = lamb_range)
+
+        lamb = np.asarray(lamb).squeeze()
+        spectrum = np.asarray(spectrum).squeeze()
+
+        idx = np.argmin(np.abs(lamb - key_wavelength))
+        amplitude = float(spectrum[idx])
+
+        records.append({
+            "file": file,
+            "concentration": concentration,
+            "measured_wavelength": float(lamb[idx]),
+            "amplitude": amplitude
+        })
+
+    results = pd.DataFrame(records)
+
+    # Sort all measurements by concentration.
+    results = results.sort_values(
+        ["concentration", "file"]
+    ).reset_index(drop=True)
+
+    concentrations = results["concentration"].to_numpy()
+    amps = results["amplitude"].to_numpy()
+
+    print(results)
 
 else:
     amps_true = 1e3 * concentrations
@@ -81,13 +154,13 @@ else:
         params, covariance = extract_spectrum_data(lamb, spectrum, lamb_range = lamb_range)
         amps.append(params[0])
 
-amps = np.array(amps)
+    amps = np.array(amps)
 linear_params, linear_covariance = analysis(amps, concentrations)
 
-fig, ax = plt.subplots(1, 2)
-ax[0].plot(lamb, profile(lamb, *params))
-ax[0].plot(lamb, spectrum, "o")
-ax[0].grid(True)
+fig, ax = plt.subplots(1)
+ax.plot(amps, linear(amps, *linear_params))
+ax.plot(amps, concentrations, "o")
+ax.grid(True)
 
 plt.show()
 
