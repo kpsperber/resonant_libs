@@ -31,15 +31,21 @@ def gaussian_fit(x, A, mu, sigma, a, b):
 
 def lorentzian_fit(x, A, mu, gamma, a, b):
     background = linear_fit(x, a, b)
-    profile = None
+    profile = A * gamma ** 2 / ((x - mu) ** 2 + gamma ** 2)
 
     return profile + background
 
-def file_to_concentration(file_name, debug = False):
+def file_to_concentration(file_name):
     concentration_string = file_name.split("_")[1]
     concentration = float(concentration_string) / (10 ** (len(concentration_string) - 1))
 
     return concentration
+
+def file_to_wavelength(file_name):
+    wavelength_string = file_name.split("_")[1]
+    wavelength = float(wavelength_string) / (10 ** (len(wavelength_string) - 3))
+
+    return wavelength
 
 def read_referenece_lines(atom_name, wavelength, top_n_lines = 10):
     root = os.getcwd()
