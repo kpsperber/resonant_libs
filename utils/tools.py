@@ -77,6 +77,40 @@ def read_referenece_lines(atom_name, wavelength, top_n_lines = 10):
 
     return df
 
+def read_binder_lines(binders, wavelength, top_n_lines = 10):
+    root = os.getcwd()
+    reference_path = os.path.join(root, "Reference Lines")
+    dfs = []
+
+    for binder in binders:
+        binder_file = binder + "_lines.csv"
+        binder_file_path = os.path.join(reference_path, binder_file)
+
+        binder_df = pd.read_csv(binder_file_path)
+        binder_df.rename(columns = {"obs_wl_air(nm)" : "wavelength", "obs_wl_vac(nm)" : "wavelength"}, inplace = True)
+
+        binder_df["wavelength"] = pd.to_numeric(binder_df["wavelength"], errors="coerce")    
+
+        mask = (binder_df["wavelength"] >= wavelength.min()) & (binder_df["wavelength"] <= wavelength.max())
+        binder_df = binder_df[mask]
+
+        binder_df["intensity_numeric"] = (binder_df["intens"].astype(str).str.extract(r"(\d+\.?\d*)")[0].astype(float))
+        binder_df["peak_type"] = (binder_df["intens"].astype(str).str.extract(r"^\d+(?:\.\d+)?(.*)$")[0])
+        binder_df.drop(columns = ["intens"], inplace = True)
+
+        binder_df = binder_df.dropna(subset = ["wavelength", "intensity_numeric"])
+        binder_df = binder_df.sort_values("wavelength").reset_index(drop = True)
+
+        binder_df = binder_df.nlargest(top_n_lines, "intensity_numeric")
+        binder_df = binder_df.sort_values("wavelength").reset_index(drop = True)
+
+        dfs.append(binder_df)
+
+    df = pd.concat(dfs, ignore_index=True)
+    df = df.sort_values("wavelength").reset_index(drop=True)
+    return df
+
+
 def initial_guess(x, y, mode = "gaussian"):
     mode = mode.lower()
 
@@ -177,22 +211,21 @@ def set_bounds(x, y, p0, mode = "gaussian"):
 
     return (lower_bound, upper_bound)
 
-def compute_area(x, params, mode = "gaussian"):
+def compute_area(params, mode="gaussian"):
     mode = mode.lower()
-    a, b = params[-2:]
+
+    A = params[0]
 
     if mode == "gaussian":
-        fit_func = gaussian_fit
+        sigma = params[2]
+        area = A * sigma * np.sqrt(2 * np.pi)
 
     elif mode == "lorentzian":
-        fit_func = lorentzian_fit
+        gamma = params[2]
+        area = A * np.pi * gamma
 
     elif mode == "voigt":
-        fit_func = voigt_fit
-
-    peak = fit_func(x, *params) - linear_fit(x, a, b)
-    peak = np.clip(peak, 0.0, None)
-    area = np.trapezoid(peak, x)
+        area = A
 
     return area
         
