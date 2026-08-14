@@ -47,7 +47,7 @@ def file_to_wavelength(file_name):
 
     return wavelength
 
-def read_referenece_lines(atom_name, wavelength, top_n_lines = 10):
+def read_referenece_lines(atom_name, wavelength, top_n_lines = 10, resonant_wavelength = None):
     root = os.getcwd()
     reference_path = os.path.join(root, "Reference Lines")
     file_path = os.path.join(reference_path, atom_name + "_lines.csv")
