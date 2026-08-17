@@ -47,6 +47,17 @@ def file_to_wavelength(file_name):
 
     return wavelength
 
+def file_to_camera_params(file_name):
+    laser_wavelength_string = file_name.split("_")[1]
+    gate_width_string = file_name.split("_")[2]
+    gate_delay_string = file_name.split("_")[3]
+
+    laser_wavelength = float(laser_wavelength_string) / (10 ** (len(laser_wavelength_string) - 3))
+    gate_width = float(gate_width_string) / (10 ** (len(gate_width_string)))
+    gate_delay = float(gate_delay_string) / (10 ** (len(gate_delay_string)))
+
+    return laser_wavelength, gate_width, gate_delay
+
 def read_referenece_lines(atom_name, wavelength, top_n_lines = 10, resonant_wavelength = None):
     root = os.getcwd()
     reference_path = os.path.join(root, "Reference Lines")
@@ -70,7 +81,7 @@ def read_referenece_lines(atom_name, wavelength, top_n_lines = 10, resonant_wave
     df["nearest_neighbor"] = df[["delta_left", "delta_right"]].min(axis=1)
 
 
-    df["distinct_score"] = (df["intensity_numeric"] * df["nearest_neighbor"])
+    df["distinct_score"] = (df["intensity_numeric"])# * df["nearest_neighbor"])
 
     df = df.nlargest(top_n_lines, "distinct_score")
     df = df.sort_values("wavelength").reset_index(drop = True)
