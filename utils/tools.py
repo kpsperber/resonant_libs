@@ -1,236 +1,76 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import os
 import pandas as pd
-
 from spexread import read_spe_file
-from scipy.optimize import curve_fit
-from scipy.special import voigt_profile
 
-def read_spe(file_name):
+def read_file(file_name, fix_spectrum = False, degree = 5):
     data = read_spe_file(file_name)
-    wavelengths = np.asarray(data["ROI 0"]["wavelength"].values)
-    spectrum = np.asarray(data["ROI 0"].squeeze().values)
 
-    return wavelengths, spectrum
+    spectrum = data["ROI 0"].values
+    spectrum = spectrum.squeeze()
 
-def linear_fit(x, a, b):
-    return a * x + b
+    wavelength = data["wavelength"].values
 
-def voigt_fit(x, A, mu, sigma, gamma, a, b):
-    background = linear_fit(x, a, b)
-    profile = A * voigt_profile(x - mu, sigma, gamma)
+    if fix_spectrum:
+        N_fit = 10
+        N = len(wavelength)
+        pixels = np.arange(N)
 
-    return profile + background
+        pixels_fit = pixels[:N_fit]
+        wavelength_fit = wavelength[:N_fit]
 
-def gaussian_fit(x, A, mu, sigma, a, b):
-    background = linear_fit(x, a, b)
-    profile = A * np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))
+        coeffs = np.polyfit(pixels_fit, wavelength_fit, degree)
+        wavelength = np.polyval(coeffs, pixels)
 
-    return profile + background
+    return wavelength, spectrum
 
-def lorentzian_fit(x, A, mu, gamma, a, b):
-    background = linear_fit(x, a, b)
-    profile = A * gamma ** 2 / ((x - mu) ** 2 + gamma ** 2)
-
-    return profile + background
-
-def file_to_concentration(file_name):
-    concentration_string = file_name.split("_")[1]
-    concentration = float(concentration_string) / (10 ** (len(concentration_string) - 1))
-
-    return concentration
-
-def file_to_wavelength(file_name):
-    wavelength_string = file_name.split("_")[1]
-    wavelength = float(wavelength_string) / (10 ** (len(wavelength_string) - 3))
-
-    return wavelength
-
-def read_referenece_lines(atom_name, wavelength, top_n_lines = 10, resonant_wavelength = None):
+def read_reference_lines(atom_name, wavelength, top_n_peaks = 5):
     root = os.getcwd()
-    reference_path = os.path.join(root, "Reference Lines")
-    file_path = os.path.join(reference_path, atom_name + "_lines.csv")
+    reference_folder = "Reference Lines"
+    root = os.path.join(root, reference_folder)
+
+    file_name = atom_name + "_lines.csv"
+    file_path = os.path.join(root, file_name)
 
     df = pd.read_csv(file_path)
-    df.rename(columns = {"obs_wl_air(nm)" : "wavelength"}, inplace = True)
-    mask = (df["wavelength"] >= wavelength.min()) & (df["wavelength"] <= wavelength.max())
-    df = df[mask]
+    df = df.rename(columns = {"obs_wl_air(nm)" : "wavelength"})
+    df = df.drop(columns = ["ritz_wl_air(nm)", "element"])
 
-    df["intensity_numeric"] = (df["intens"].astype(str).str.extract(r"(\d+\.?\d*)")[0].astype(float))
-    df["peak_type"] = (df["intens"].astype(str).str.extract(r"^\d+(?:\.\d+)?(.*)$")[0])
-    df.drop(columns = ["intens"], inplace = True)
+    wavelength_mask = (df["wavelength"].values >= wavelength.min()) & (df["wavelength"].values <= wavelength.max())
+    df = df[wavelength_mask]
 
-    df = df.dropna(subset = ["wavelength", "intensity_numeric"])
-    df = df.sort_values("wavelength").reset_index(drop = True)
+    species_mask = (df["sp_num"] == 1)
+    df = df[species_mask]
 
-    df["delta_left"] = df["wavelength"] - df["wavelength"].shift(1)
-    df["delta_right"] = df["wavelength"].shift(-1) - df["wavelength"]
+    df = df[~df["intens"].astype(str).str.contains(r"[hw]", case=False, na=False)].copy()
+    df["intensity"] = (df["intens"].astype(str).str.extract(r"(\d+\.?\d*)"))[0].astype(float)
 
-    df["nearest_neighbor"] = df[["delta_left", "delta_right"]].min(axis=1)
+    wls = df["wavelength"].values
 
+    avg_spacing = []
 
-    df["distinct_score"] = (df["intensity_numeric"] * df["nearest_neighbor"])
+    for wl in wls:
+        distances = np.abs(wls - wl)
+        distances = distances[distances > 0]
 
-    df = df.nlargest(top_n_lines, "distinct_score")
-    df = df.sort_values("wavelength").reset_index(drop = True)
+        avg_spacing.append(np.mean(distances))
+
+    df["avg_spacing"] = avg_spacing
+
+    df["intensity_score"] = df["intensity"] / df["intensity"].max()
+    df["spacing_score"] = df["avg_spacing"] / df["avg_spacing"].max()
+
+    df["score"] = df["intensity_score"] * df["spacing_score"]
+
+    df = df.nlargest(top_n_peaks, "score")
 
     return df
 
-def read_binder_lines(binders, wavelength, top_n_lines = 10):
+def read_binder_lines(atom_names):
     root = os.getcwd()
-    reference_path = os.path.join(root, "Reference Lines")
-    dfs = []
 
-    for binder in binders:
-        binder_file = binder + "_lines.csv"
-        binder_file_path = os.path.join(reference_path, binder_file)
-
-        binder_df = pd.read_csv(binder_file_path)
-        binder_df.rename(columns = {"obs_wl_air(nm)" : "wavelength", "obs_wl_vac(nm)" : "wavelength"}, inplace = True)
-
-        binder_df["wavelength"] = pd.to_numeric(binder_df["wavelength"], errors="coerce")    
-
-        mask = (binder_df["wavelength"] >= wavelength.min()) & (binder_df["wavelength"] <= wavelength.max())
-        binder_df = binder_df[mask]
-
-        binder_df["intensity_numeric"] = (binder_df["intens"].astype(str).str.extract(r"(\d+\.?\d*)")[0].astype(float))
-        binder_df["peak_type"] = (binder_df["intens"].astype(str).str.extract(r"^\d+(?:\.\d+)?(.*)$")[0])
-        binder_df.drop(columns = ["intens"], inplace = True)
-
-        binder_df = binder_df.dropna(subset = ["wavelength", "intensity_numeric"])
-        binder_df = binder_df.sort_values("wavelength").reset_index(drop = True)
-
-        binder_df = binder_df.nlargest(top_n_lines, "intensity_numeric")
-        binder_df = binder_df.sort_values("wavelength").reset_index(drop = True)
-
-        dfs.append(binder_df)
-
-    df = pd.concat(dfs, ignore_index=True)
-    df = df.sort_values("wavelength").reset_index(drop=True)
-    return df
-
-
-def initial_guess(x, y, mode = "gaussian"):
-    mode = mode.lower()
-
-    A0 = y.max()
-    mu0 = np.sum(x * y) / np.sum(y)
-    sigma0 = np.sqrt(np.sum(y * (x - mu0) ** 2) / np.sum(y))
-    gamma0 = sigma0
-    a0 = (y[-1] - y[0]) / (x[-1] - x[0])
-    b0 = y.mean() - a0 * x.mean()
-
-    if mode == "gaussian":
-        return [A0, mu0, sigma0, a0, b0]
-
-    elif mode == "lorentzian":
-        return [A0, mu0, gamma0, a0, b0]
-
-    elif mode == "voigt":
-        return [A0, mu0, sigma0, gamma0, a0, b0]
-
-def set_bounds(x, y, p0, mode = "gaussian"):
-    mode = mode.lower()
-
-    x_min = x.min()
-    x_max = x.max()
-    y_min = y.min()
-    y_max = y.max()
-
-    x_range = x_max - x_min
-    y_range = y_max - y_min
-
-    A_lower = 0.0
-    A_upper = np.inf
-
-    mu_lower = x_min
-    mu_upper = x_max
-
-    width_lower = 1e-6
-    width_upper = x_range
-
-    a_lower = -np.inf
-    a_upper = np.inf
-
-    b_lower = -np.inf
-    b_upper = np.inf
-
-    if mode == "gaussian":
-        lower_bound = [
-            A_lower,
-            mu_lower,
-            width_lower,
-            a_lower,
-            b_lower
-        ]
-
-        upper_bound = [
-            A_upper,
-            mu_upper,
-            width_upper,
-            a_upper,
-            b_upper
-        ]
-
-    elif mode == "lorentzian":
-        lower_bound = [
-            A_lower,
-            mu_lower,
-            width_lower,
-            a_lower,
-            b_lower
-        ]
-
-        upper_bound = [
-            A_upper,
-            mu_upper,
-            width_upper,
-            a_upper,
-            b_upper
-        ]
-
-    elif mode == "voigt":
-        lower_bound = [
-            A_lower,
-            mu_lower,
-            width_lower,
-            width_lower,
-            a_lower,
-            b_lower
-        ]
-
-        upper_bound = [
-            A_upper,
-            mu_upper,
-            width_upper,
-            width_upper,
-            a_upper,
-            b_upper
-        ]
-
-    return (lower_bound, upper_bound)
-
-def compute_area(params, mode="gaussian"):
-    mode = mode.lower()
-
-    A = params[0]
-
-    if mode == "gaussian":
-        sigma = params[2]
-        area = A * sigma * np.sqrt(2 * np.pi)
-
-    elif mode == "lorentzian":
-        gamma = params[2]
-        area = A * np.pi * gamma
-
-    elif mode == "voigt":
-        area = A
-
-    return area
+    for atom in atom_names:
+        file_name = atom + "_lines.csv"
+        file_path = os.path.join(root, file_name)
         
-def compute_r2(y, y_fit):
-    num = np.sum((y - y_fit) ** 2)
-    denom = np.sum((y - y.mean()) ** 2)
-
-    return 1 - num / denom
+    return
