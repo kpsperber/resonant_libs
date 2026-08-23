@@ -6,21 +6,18 @@ from scipy.signal import savgol_filter
 from utils.tools import *
 
 root = os.getcwd()
-measurement = "Gate Delay"
+measurement = "Gate Width"
 date = "8_18_26"
-file_name = "delay_0.SPE"
+file_name = "width_0.SPE"
 atom = "Nd"
 binder = None
 
 N_points = 100
 
-window_length = 31
-polyorder = 3
-
-gate_delay_start = 50
-gate_delay_end = 5000
+gate_width_start = 10
+gate_width_end = 500
 N_params = 1000
-gate_delays = np.linspace(gate_delay_start, gate_delay_end, N_params)
+gate_widths = np.linspace(gate_width_start, gate_width_end, N_params)
 
 
 fix_spectrum = True
@@ -48,24 +45,34 @@ point1, point2 = two_point_selection(x, y, lamb0, N_points = N_points)
 plot_area(x, y, lamb0, point1, point2)
 
 areas = []
+snrs = []
 for data in spectrum:
     y = data[start : end].astype(float)
     area = compute_area(x, y, point1, point2)
+    snr = compute_snr(x, y, point1, point2)
     areas.append(area)
+    snrs.append(snr)
 
 areas = np.array(areas)
+snrs = np.array(snrs)
 
-areas_smooth = savgol_filter(areas, window_length=window_length, polyorder=polyorder)
-id_max = np.argmax(areas_smooth)
 
 fig, ax = plt.subplots(1)
-ax.set_title("Gate Delay Optimization")
-ax.plot(gate_delays, areas_smooth, color = "black")
-ax.vlines(gate_delays[id_max], ymin = 0, ymax = 1.05 * areas_smooth.max(), color = "red", linestyle = "--", label = f"Ideal Gate Delay: {gate_delays[id_max]} ns")
+ax.set_title("Gate Width Optimization")
+ax.plot(gate_widths, areas, color = "black")
 
-ax.set_xlabel("Gate Delay (ns)")
+ax.set_xlabel("Gate Width (ns)")
 ax.set_ylabel("Peak Area")
 
 ax.grid(True)
-ax.legend()
+plt.show()
+
+fig, ax = plt.subplots(1)
+ax.set_title("Gate Width Optimization")
+ax.plot(gate_widths, snrs, color = "black")
+
+ax.set_xlabel("Gate Width (ns)")
+ax.set_ylabel("SNR")
+
+ax.grid(True)
 plt.show()
